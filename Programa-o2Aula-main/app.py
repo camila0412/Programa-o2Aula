@@ -41,3 +41,74 @@ def cadastro():
         return redirect(url_for('login'))
     
     return render_template('cadastro.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username'].strip()
+        senha = request.form['senha'].strip()
+
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM usuario WHERE username_usuario = %s", (username,))
+        usuario = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if usuario and check_password_hash(usuario['password_usuario'], senha):
+            if not usuario['conta_ativa']:
+                flash("Esta conta está desativada.", "erro")
+                return redirect(url_for('login'))
+            
+            session['usuario_id'] = usuario['cod_usuario']
+            session['usuario_nome'] = usuario['nome_usuario']
+            return redirect(url_for('dashboard'))
+        else:
+            flash("Usuário ou senha inválidos.", "erro")
+            return redirect(url_for('login'))
+
+    return render_template('login.html')
+
+@app.route('/dashboard')
+def dashboard():
+    # 1. Verifica se a chave 'usuario_id' existe na sessão.
+    #    Esta é a forma mais segura de saber se o login foi feito com sucesso.
+    if 'usuario_id' not in session:
+        # Se não estiver logado, envia uma mensagem e redireciona para a tela de login.
+        flash("Você precisa fazer login para acessar esta página.", "erro")
+        return redirect(url_for('login'))
+    
+    # 2. Se o usuário estiver logado, simplesmente renderize o template do dashboard.
+    #    O template 'dashboard.html' (que estende o 'base.html') vai acessar
+    #    automaticamente a variável {{ session['usuario_nome'] }} e exibi-la.
+    return render_template('dashboard.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('usuario_id', None)
+    session.pop('usuario_nome', None)
+    flash("Você saiu da sua conta.", "sucesso")
+    return redirect(url_for('login'))
+
+# Rota Principal (Raiz do site)
+@app.route('/')
+def index():
+    return redirect(url_for('login'))
+
+# Rota para verificar se usuário ou email já existem
+@app.route('/verificar_usuario_email', methods=['POST'])
+def verificar_usuario_email():
+    username = request.form['username']
+    email = request.form['email']
+
+    conn = mysql.connector.connect(**db_config)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM usuario WHERE username_usuario = %s OR email_usuario = %s", (username, email))
+    existe = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    return 'existe' if existe else 'disponivel'
+
+if __name__ == '__main__':
+    app.run(debug=True)
