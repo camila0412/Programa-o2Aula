@@ -53,3 +53,13 @@ body {
     padding-left: 220px; /* espaço para a barra lateral */
     z-index: 1000;
 }
+
+.conteudo {
+    margin-left: 200px; /* Largura do menu lateral */
+    padding: 80px 20px 20px 20px; /* Topo (menu superior) e espaçamentos */
+}
+
+
+
+
+

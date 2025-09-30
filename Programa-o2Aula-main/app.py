@@ -112,3 +112,204 @@ def verificar_usuario_email():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+# Rota para Listar e Pesquisar Publicadoras
+@app.route('/publicadoras')
+def publicadoras():
+    # Proteção de rota
+    if 'usuario_id' not in session:
+        flash("Você precisa fazer login para acessar esta página.", "erro")
+        return redirect(url_for('login'))
+
+    conn = mysql.connector.connect(**db_config)
+    cursor = conn.cursor(dictionary=True)
+
+    # Lógica de pesquisa
+    query = request.args.get('q')
+    if query:
+        search_query = "%" + query + "%"
+        cursor.execute("SELECT * FROM Publicadora WHERE nome_Publicadora LIKE %s ORDER BY nome_Publicadora ASC", (search_query,))
+    else:
+        cursor.execute("SELECT * FROM Publicadora ORDER BY nome_Publicadora ASC")
+    
+    lista_publicadoras = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+
+    return render_template('publicadoras.html', publicadoras=lista_publicadoras, query=query)
+
+# Rota para Cadastrar uma Nova Publicadora
+@app.route('/publicadoras/cadastrar', methods=['GET', 'POST'])
+def cadastrar_publicadora():
+    if 'usuario_id' not in session:
+        flash("Você precisa fazer login para acessar esta página.", "erro")
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        nome = request.form['nome_publicadora'].strip()
+        pais = request.form['pais_publicadora'].strip()
+
+        if not nome:
+            flash("O nome da publicadora é obrigatório.", "erro")
+            return redirect(url_for('cadastrar_publicadora'))
+
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Verifica se a publicadora já existe
+        cursor.execute("SELECT cod_Publicadora FROM Publicadora WHERE nome_Publicadora = %s", (nome,))
+        if cursor.fetchone():
+            flash("Já existe uma publicadora com este nome.", "erro")
+            cursor.close()
+            conn.close()
+            return redirect(url_for('cadastrar_publicadora'))
+
+        # Insere a nova publicadora
+        cursor.execute("INSERT INTO Publicadora (nome_Publicadora, pais_Publicadora) VALUES (%s, %s)", (nome, pais))
+        conn.commit()
+        
+        cursor.close()
+        conn.close()
+
+        flash("Publicadora cadastrada com sucesso!", "sucesso")
+        return redirect(url_for('publicadoras'))
+
+    return render_template('cadastrar_publicadora.html')
+
+# Rota para Editar uma Publicadora
+@app.route('/publicadoras/editar/<int:cod>', methods=['GET', 'POST'])
+def editar_publicadora(cod):
+    if 'usuario_id' not in session:
+        flash("Você precisa fazer login para acessar esta página.", "erro")
+        return redirect(url_for('login'))
+
+    conn = mysql.connector.connect(**db_config)
+    cursor = conn.cursor(dictionary=True)
+
+    if request.method == 'POST':
+        nome = request.form['nome_publicadora'].strip()
+        pais = request.form['pais_publicadora'].strip()
+
+        if not nome:
+            flash("O nome da publicadora é obrigatório.", "erro")
+            return redirect(url_for('editar_publicadora', cod=cod))
+
+        # Verifica se o novo nome já existe em outro registro
+        cursor.execute("SELECT cod_Publicadora FROM Publicadora WHERE nome_Publicadora = %s AND cod_Publicadora != %s", (nome, cod))
+        if cursor.fetchone():
+            flash("Já existe outra publicadora com este nome.", "erro")
+            cursor.close()
+            conn.close()
+            return redirect(url_for('editar_publicadora', cod=cod))
+        
+        # Atualiza o registro
+        cursor.execute("UPDATE Publicadora SET nome_Publicadora = %s, pais_Publicadora = %s WHERE cod_Publicadora = %s", (nome, pais, cod))
+        conn.commit()
+        
+        cursor.close()
+        conn.close()
+
+        flash("Publicadora atualizada com sucesso!", "sucesso")
+        return redirect(url_for('publicadoras'))
+
+    # GET: Busca a publicadora atual para preencher o formulário
+    cursor.execute("SELECT * FROM Publicadora WHERE cod_Publicadora = %s", (cod,))
+    pub = cursor.fetchone()
+    
+    cursor.close()
+    conn.close()
+
+    if not pub:
+        flash("Publicadora não encontrada.", "erro")
+        return redirect(url_for('publicadoras'))
+
+    return render_template('editar_publicadora.html', pub=pub)
+
+# Rota para Excluir uma Publicadora
+@app.route('/publicadoras/excluir/<int:cod>', methods=['POST'])
+def excluir_publicadora(cod):
+    if 'usuario_id' not in session:
+        flash("Você precisa fazer login para acessar esta página.", "erro")
+        return redirect(url_for('login'))
+
+    conn = mysql.connector.connect(**db_config)
+    cursor = conn.cursor()
+    
+    # Exclui a publicadora
+    # Nota: A regra ON DELETE SET NULL na tabela Jogo fará com que os jogos
+    # desta publicadora tenham seu `cod_publicadora_fk` definido como NULL.
+    cursor.execute("DELETE FROM Publicadora WHERE cod_Publicadora = %s", (cod,))
+    conn.commit()
+    
+    cursor.close()
+    conn.close()
+
+    flash("Publicadora excluída com sucesso!", "sucesso")
+    return redirect(url_for('publicadoras'))
+
+
+
+
+
+
+# Rotas de Gerenciamento de Jogos
+# -------------------------------------------
+
+# Rota para Listar Jogos em formato de Card
+@app.route('/jogos')
+def jogos():
+    if 'usuario_id' not in session:
+        flash("Você precisa fazer login para acessar esta página.", "erro")
+        return redirect(url_for('login'))
+
+    conn = mysql.connector.connect(**db_config)
+    cursor = conn.cursor(dictionary=True)
+
+    # Query complexa para buscar jogos e agrupar plataformas e gêneros
+    # Usamos LEFT JOIN para garantir que jogos sem dev/pub ainda apareçam
+    # Usamos GROUP_CONCAT para juntar múltiplos gêneros/plataformas em uma única string
+    base_query = """
+        SELECT 
+            j.cod_Jogo,
+            j.titulo_Jogo,
+            j.url_imagem_capa_Jogo,
+            YEAR(j.data_lancamento_Jogo) AS ano_lancamento,
+            d.nome_Desenvolvedor,
+            GROUP_CONCAT(DISTINCT p.nome_Plataforma ORDER BY p.nome_Plataforma SEPARATOR ', ') AS plataformas,
+            GROUP_CONCAT(DISTINCT g.nome_Genero ORDER BY g.nome_Genero SEPARATOR ', ') AS generos
+        FROM 
+            Jogo j
+        LEFT JOIN 
+            Desenvolvedor d ON j.cod_desenvolvedor_fk = d.cod_Desenvolvedor
+        LEFT JOIN 
+            Jogo_Plataforma jp ON j.cod_Jogo = jp.cod_jogo_fk
+        LEFT JOIN 
+            Plataforma p ON jp.cod_plataforma_fk = p.cod_Plataforma
+        LEFT JOIN 
+            Jogo_Genero jg ON j.cod_Jogo = jg.cod_jogo_fk
+        LEFT JOIN 
+            Genero g ON jg.cod_genero_fk = g.cod_Genero
+    """
+
+    # Lógica de pesquisa
+    query = request.args.get('q')
+    if query:
+        search_query = "%" + query + "%"
+        # Adiciona a cláusula WHERE e GROUP BY para a pesquisa
+        cursor.execute(base_query + " WHERE j.titulo_Jogo LIKE %s GROUP BY j.cod_Jogo ORDER BY j.titulo_Jogo ASC", (search_query,))
+    else:
+        # Adiciona apenas o GROUP BY para a listagem completa
+        cursor.execute(base_query + " GROUP BY j.cod_Jogo ORDER BY j.titulo_Jogo ASC")
+
+    lista_jogos = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+
+    return render_template('jogos.html', jogos=lista_jogos, query=query)
+
+
+# Executa o app
+if __name__ == '__main__':
+    app.run(debug=True)
